@@ -25,7 +25,10 @@ fn config(steps: usize) -> (ProverConfig<T, U>, VerifierConfig) {
         initial_k: 4,
         ks: ks.clone(),
         initial_reed_solomon: reed_solomon::<T>(initial_dims.0, initial_dims.0 * 4),
-        reed_solomon_codes: dims.iter().map(|&(m, _)| reed_solomon::<U>(m, m * 4)).collect(),
+        reed_solomon_codes: dims
+            .iter()
+            .map(|&(m, _)| reed_solomon::<U>(m, m * 4))
+            .collect(),
         num_queries: 148,
     };
     let verifier = prover.verifier_config();
@@ -188,7 +191,10 @@ fn evaluation_claims_bind_to_commitment() {
         let p = poly(21);
         let claims: Vec<EvalClaim<T>> = [0usize, 7, 1000, 4095]
             .iter()
-            .map(|&index| EvalClaim { index, value: p[index] })
+            .map(|&index| EvalClaim {
+                index,
+                value: p[index],
+            })
             .collect();
         let proof = prove_with_evaluations(&pc, &p, &claims, FiatShamir::new_sha256(0)).unwrap();
         let check = |cl: &[EvalClaim<T>]| {
@@ -219,7 +225,10 @@ fn evaluation_claims_bind_to_commitment() {
 fn rejects_false_claim_from_honest_prover() {
     let (pc, vc) = config(2);
     let p = poly(33);
-    let lie = vec![EvalClaim { index: 5, value: p[5].add(&T::one()) }];
+    let lie = vec![EvalClaim {
+        index: 5,
+        value: p[5].add(&T::one()),
+    }];
     let proof = prove_with_evaluations(&pc, &p, &lie, FiatShamir::new_sha256(0)).unwrap();
     assert!(!verify_with_evaluations(&vc, &proof, &lie, FiatShamir::new_sha256(0)).unwrap());
 }

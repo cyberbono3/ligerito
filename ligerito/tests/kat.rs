@@ -12,7 +12,10 @@ use ligerito_binary_fields::{BinaryElem128 as U, BinaryElem32 as T, BinaryFieldE
 use sha2::{Digest, Sha256};
 use std::{fmt::Write, marker::PhantomData};
 
-const KAT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../test-vectors/ligerito_kat.txt");
+const KAT_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../test-vectors/ligerito_kat.txt"
+);
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
@@ -32,7 +35,12 @@ fn transcript_lines(name: &str, mut fs: impl Transcript, out: &mut String) {
     let q = fs.get_distinct_queries(1024, 8);
     let cs: Vec<String> = c.iter().map(|x| hex(&elem_bytes(x))).collect();
     writeln!(out, "transcript.{name}.challenges_u128 = {}", cs.join(",")).unwrap();
-    writeln!(out, "transcript.{name}.challenge_u32 = {}", hex(&elem_bytes(&t))).unwrap();
+    writeln!(
+        out,
+        "transcript.{name}.challenge_u32 = {}",
+        hex(&elem_bytes(&t))
+    )
+    .unwrap();
     writeln!(out, "transcript.{name}.queries = {q:?}").unwrap();
 }
 
@@ -45,14 +53,20 @@ fn compute() -> String {
     transcript_lines("blake2b", FiatShamir::new_blake2b(), &mut out);
 
     let rows: Vec<Vec<T>> = (0..64u32)
-        .map(|i| (0..16u32).map(|j| T::from(i.wrapping_mul(2654435761) ^ j)).collect())
+        .map(|i| {
+            (0..16u32)
+                .map(|j| T::from(i.wrapping_mul(2654435761) ^ j))
+                .collect()
+        })
         .collect();
     let leaves: Vec<_> = rows.iter().map(|r| hash_row(r)).collect();
     let root = ligerito_merkle::build_merkle_tree(&leaves).get_root();
     writeln!(out, "merkle.root_64_rows = {}", hex(&root.root.unwrap())).unwrap();
 
     let pc = hardcoded_config_12(PhantomData::<T>, PhantomData::<U>);
-    let poly: Vec<T> = (0..1u32 << 12).map(|i| T::from(i.wrapping_mul(0x9E37_79B9) ^ 0x5a5a)).collect();
+    let poly: Vec<T> = (0..1u32 << 12)
+        .map(|i| T::from(i.wrapping_mul(0x9E37_79B9) ^ 0x5a5a))
+        .collect();
     let proof = prove_sha256(&pc, &poly).unwrap();
     assert!(verify_sha256(&hardcoded_config_12_verifier(), &proof).unwrap());
     let mut h = Sha256::new();
@@ -74,7 +88,12 @@ fn compute() -> String {
         }
     }
     writeln!(out, "proof.config12_sha256.digest = {}", hex(&h.finalize())).unwrap();
-    writeln!(out, "proof.config12_sha256.size_bytes = {}", proof.size_of()).unwrap();
+    writeln!(
+        out,
+        "proof.config12_sha256.size_bytes = {}",
+        proof.size_of()
+    )
+    .unwrap();
     out
 }
 
@@ -85,7 +104,8 @@ fn known_answers() {
         std::fs::write(KAT_PATH, &got).unwrap();
         return;
     }
-    let want = std::fs::read_to_string(KAT_PATH).expect("missing KAT file; run with LIGERITO_REGEN_KAT=1");
+    let want =
+        std::fs::read_to_string(KAT_PATH).expect("missing KAT file; run with LIGERITO_REGEN_KAT=1");
     for line in got.lines() {
         let key = line.split(" = ").next().unwrap();
         // lines for transcripts not compiled into this build are skipped
@@ -105,7 +125,11 @@ fn challenges_use_all_128_bits() {
             or_lo |= u64::from_le_bytes(b[..8].try_into().unwrap());
             or_hi |= u64::from_le_bytes(b[8..].try_into().unwrap());
         }
-        assert_eq!((or_lo, or_hi), (u64::MAX, u64::MAX), "{name}: challenge bits stuck at zero");
+        assert_eq!(
+            (or_lo, or_hi),
+            (u64::MAX, u64::MAX),
+            "{name}: challenge bits stuck at zero"
+        );
     }
     check("sha256", FiatShamir::new_sha256(0));
     #[cfg(feature = "transcript-merlin")]

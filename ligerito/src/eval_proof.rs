@@ -56,18 +56,44 @@ impl<U: BinaryFieldElement> EvalSumcheckRound<U> {
 
 /// Bind the evaluation claims into the transcript (always called, so a proof
 /// without claims cannot be replayed as one with claims or vice versa).
-pub(crate) fn absorb_claims<T: BinaryFieldElement>(
-    fs: &mut impl crate::transcript::Transcript,
+#[forbid(unsafe_code)]
+#[warn(clippy::all, clippy::pedantic)]
+#[deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::todo,
+    clippy::unimplemented,
+    clippy::dbg_macro,
+    clippy::print_stdout,
+    clippy::await_holding_lock,
+    clippy::allow_attributes
+)]
+pub(crate) fn absorb_claims<T, C>(
+    fs: &mut C,
     claims: &[EvalClaim<T>],
-) {
-    fs.absorb_bytes(b"ligerito-v1-claims", &(claims.len() as u64).to_le_bytes());
-    for c in claims {
-        fs.absorb_bytes(b"ligerito-v1-claim-index", &(c.index as u64).to_le_bytes());
-        fs.absorb_elem(c.value);
+) -> core::result::Result<(), crate::opening_transcript::DriverError<C::Error>>
+where
+    T: BinaryFieldElement,
+    C: crate::opening_transcript::OpeningTranscript<Message = T>,
+{
+    use crate::opening_transcript::DriverError;
+    let count = u64::try_from(claims.len())
+        .map_err(|_| DriverError::Native(crate::LigeritoError::InvalidProof))?;
+    fs.observe_bytes(b"ligerito-v1-claims", &count.to_le_bytes())
+        .map_err(DriverError::Transcript)?;
+    for claim in claims {
+        let index = u64::try_from(claim.index)
+            .map_err(|_| DriverError::Native(crate::LigeritoError::InvalidProof))?;
+        fs.observe_bytes(b"ligerito-v1-claim-index", &index.to_le_bytes())
+            .map_err(DriverError::Transcript)?;
+        fs.observe_message(claim.value)
+            .map_err(DriverError::Transcript)?;
     }
+    Ok(())
 }
 
-/// Compute the batched eq table: Q[j] = Σ_k α_k · eq(z_k, j)
+/// Compute the batched eq table: `Q[j] = Σ_k α_k · eq(z_k, j)`
 /// where j ranges over [0, N) and z_k is the binary representation of claim indices.
 ///
 /// eq(z, x) = Π_i (z_i·x_i + (1+z_i)(1+x_i)) for binary field
@@ -250,23 +276,32 @@ where
     Some((challenges, p_at_r))
 }
 
-/// Compute Q(r) = Σ_k α_k · eq(z_k, r) where r = (r_1,...,r_n).
-///
-/// eq(z, r) = Π_i (z_i·r_i + (1+z_i)(1+r_i))
+// Index bits follow the native LSB folding order.
+#[forbid(unsafe_code)]
+#[warn(clippy::all, clippy::pedantic)]
+#[deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::todo,
+    clippy::unimplemented,
+    clippy::dbg_macro,
+    clippy::print_stdout,
+    clippy::await_holding_lock,
+    clippy::allow_attributes
+)]
 fn compute_eq_at_r<T, U>(claims: &[EvalClaim<T>], alphas: &[U], challenges: &[U]) -> U
 where
     T: BinaryFieldElement,
     U: BinaryFieldElement + From<T>,
 {
-    let n = challenges.len();
     let mut result = U::zero();
 
     for (claim, &alpha) in claims.iter().zip(alphas.iter()) {
         let z = claim.index;
         let mut eq_val = U::one();
 
-        for i in 0..n {
-            let r_i = challenges[i];
+        for (i, &r_i) in challenges.iter().enumerate() {
             let z_bit = (z >> i) & 1;
 
             let factor = if z_bit == 1 {

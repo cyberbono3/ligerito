@@ -4,10 +4,7 @@ use super::device::GpuDevice;
 use super::shaders;
 use binary_fields::BinaryFieldElement;
 use bytemuck::{Pod, Zeroable};
-use wgpu::{
-    BindGroup, BindGroupLayout, Buffer, BufferUsages, CommandEncoder, ComputePipeline,
-    PipelineLayout, ShaderModule,
-};
+use wgpu::{BindGroup, BindGroupLayout, Buffer, BufferUsages, ComputePipeline};
 
 /// FFT parameters passed to GPU shader
 #[repr(C)]
@@ -115,9 +112,9 @@ impl GpuFft {
     }
 
     /// Perform in-place FFT on GPU
-    pub async fn fft_inplace<F: BinaryFieldElement>(&mut self, data: &mut [F]) -> Result<(), String>
+    pub async fn fft_inplace<F>(&mut self, data: &mut [F]) -> Result<(), String>
     where
-        F: bytemuck::Pod,
+        F: BinaryFieldElement + bytemuck::Pod,
     {
         // Initialize pipeline if needed
         self.init_pipeline().await?;
@@ -243,7 +240,7 @@ impl GpuFft {
 
             // Calculate optimal workgroup count
             let workgroup_size = self.device.optimal_workgroup_size(workgroup_count);
-            let num_workgroups = (workgroup_count + workgroup_size - 1) / workgroup_size;
+            let num_workgroups = workgroup_count.div_ceil(workgroup_size);
 
             compute_pass.dispatch_workgroups(num_workgroups, 1, 1);
         }
@@ -255,9 +252,9 @@ impl GpuFft {
 
     /// Convert field elements to u32 array
     /// GPU shader expects 128-bit values (4 x u32) regardless of field size
-    fn elements_to_u32<F: BinaryFieldElement>(&self, elements: &[F]) -> Vec<u32>
+    fn elements_to_u32<F>(&self, elements: &[F]) -> Vec<u32>
     where
-        F: bytemuck::Pod,
+        F: BinaryFieldElement + bytemuck::Pod,
     {
         // Allocate result buffer (4 u32s per element for 128-bit representation)
         let mut result = Vec::with_capacity(elements.len() * 4);
@@ -284,13 +281,13 @@ impl GpuFft {
     }
 
     /// Read buffer from GPU and convert to field elements
-    async fn read_buffer_to_elements<F: BinaryFieldElement>(
+    async fn read_buffer_to_elements<F>(
         &self,
         buffer: &Buffer,
         output: &mut [F],
     ) -> Result<(), String>
     where
-        F: bytemuck::Pod,
+        F: BinaryFieldElement + bytemuck::Pod,
     {
         // Create staging buffer for reading
         let staging_buffer = self.device.device.create_buffer(&wgpu::BufferDescriptor {
@@ -315,7 +312,9 @@ impl GpuFft {
         let (sender, receiver) = futures::channel::oneshot::channel();
 
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).unwrap();
+            if let Err(result) = sender.send(result) {
+                tracing::warn!(?result, "GPU FFT mapping receiver was dropped");
+            }
         });
 
         self.device.device.poll(wgpu::Maintain::Wait);
@@ -362,79 +361,46 @@ impl GpuFft {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ligerito_binary_fields::{BinaryElem128, BinaryFieldElement};
+    use ligerito_binary_fields::BinaryElem128;
 
-    #[tokio::test]
-    async fn test_gpu_fft_basic() {
-        // Initialize GPU device
-        let device = match GpuDevice::new().await {
-            Ok(d) => d,
-            Err(e) => {
-                println!("GPU not available: {}, skipping test", e);
-                return;
-            }
-        };
-
-        let mut gpu_fft = GpuFft::new(device);
-
-        // Create simple test data
-        let n = 8;
-        let mut data: Vec<BinaryElem128> = (0..n)
-            .map(|i| BinaryElem128::from_value(i as u128))
-            .collect();
-
-        println!("Input data: {:?}", data);
-
-        // Run GPU FFT
-        match gpu_fft.fft_inplace(&mut data).await {
-            Ok(_) => println!("GPU FFT completed successfully!"),
-            Err(e) => {
-                println!("GPU FFT failed: {}", e);
-                panic!("GPU FFT test failed");
-            }
-        }
-
-        println!("Output data: {:?}", data);
-
-        // Basic sanity checks
-        // FFT of constant should give [n*const, 0, 0, ...]
-        let mut constant_data: Vec<BinaryElem128> = vec![BinaryElem128::from_value(1); n];
-        gpu_fft.fft_inplace(&mut constant_data).await.unwrap();
-
-        println!("FFT of all-ones: {:?}", constant_data);
-
-        // In binary fields, sum of n ones = n (if n is odd) or 0 (if n is even)
-        // Since n=8 (even), first element should be 0
-        // But this depends on the FFT implementation details
+    #[derive(Debug, thiserror::Error)]
+    enum FftTestError {
+        #[error("GPU initialization failed: {message}")]
+        Initialization { message: String },
+        #[error("GPU FFT execution failed: {message}")]
+        Execution { message: String },
     }
 
-    #[tokio::test]
-    async fn test_gpu_fft_vs_cpu() {
-        // Initialize GPU device
-        let device = match GpuDevice::new().await {
-            Ok(d) => d,
-            Err(e) => {
-                println!("GPU not available: {}, skipping test", e);
-                return;
-            }
-        };
+    fn gpu_fft() -> Result<GpuFft, FftTestError> {
+        let device = pollster::block_on(GpuDevice::new())
+            .map_err(|message| FftTestError::Initialization { message })?;
+        Ok(GpuFft::new(device))
+    }
 
-        let mut gpu_fft = GpuFft::new(device);
+    #[test]
+    fn test_gpu_fft_basic() -> Result<(), FftTestError> {
+        let mut gpu_fft = gpu_fft()?;
+        let expected = [BinaryElem128::from(0_u128); 8];
+        let mut data = expected;
+        pollster::block_on(gpu_fft.fft_inplace(&mut data))
+            .map_err(|message| FftTestError::Execution { message })?;
+        assert_eq!(data, expected);
+        Ok(())
+    }
 
-        // Create test data
-        let n = 16;
-        let data: Vec<BinaryElem128> = (0..n)
-            .map(|i| BinaryElem128::from_value((i * 7) as u128))
-            .collect();
-
-        let mut gpu_data = data.clone();
-
-        // Run GPU FFT
-        gpu_fft.fft_inplace(&mut gpu_data).await.unwrap();
-
-        println!("GPU FFT result: {:?}", gpu_data);
-
-        // TODO: Compare with CPU FFT when available
-        // For now, just verify it runs without crashing
+    #[test]
+    fn test_gpu_fft_vs_cpu() -> Result<(), FftTestError> {
+        let mut gpu_fft = gpu_fft()?;
+        for log_n in [1_usize, 4] {
+            let mut gpu_data: Vec<BinaryElem128> =
+                (1..=1_u128 << log_n).map(BinaryElem128::from).collect();
+            let mut expected = gpu_data.clone();
+            let twiddles = reed_solomon::compute_twiddles(log_n, BinaryElem128::from(0_u128));
+            reed_solomon::fft(&mut expected, &twiddles, false);
+            pollster::block_on(gpu_fft.fft_inplace(&mut gpu_data))
+                .map_err(|message| FftTestError::Execution { message })?;
+            assert_eq!(gpu_data, expected, "native FFT mismatch at log_n={log_n}");
+        }
+        Ok(())
     }
 }

@@ -27,6 +27,17 @@ pub struct GpuCapabilities {
     pub backend: String,
 }
 
+impl GpuCapabilities {
+    fn optimal_workgroup_size(&self, problem_size: u32) -> u32 {
+        for size in [256, 128, 64, 32, 16, 8, 4, 2, 1] {
+            if size <= self.max_compute_workgroup_size_x && problem_size >= size {
+                return size;
+            }
+        }
+        1
+    }
+}
+
 impl GpuDevice {
     /// Initialize WebGPU device
     pub async fn new() -> Result<Self, String> {
@@ -127,16 +138,7 @@ impl GpuDevice {
 
     /// Get optimal workgroup size for given problem size
     pub fn optimal_workgroup_size(&self, problem_size: u32) -> u32 {
-        let max_size = self.capabilities.max_compute_workgroup_size_x;
-
-        // Try powers of 2, starting from 256 (common optimal size)
-        for size in [256, 128, 64, 32, 16, 8, 4, 2, 1].iter() {
-            if *size <= max_size && problem_size >= *size {
-                return *size;
-            }
-        }
-
-        1
+        self.capabilities.optimal_workgroup_size(problem_size)
     }
 }
 
@@ -161,26 +163,24 @@ pub async fn is_available() -> bool {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn test_device_initialization() {
-        if !is_available().await {
-            eprintln!("WebGPU not available, skipping test");
-            return;
-        }
-
-        let device = GpuDevice::new().await;
-        assert!(device.is_ok());
-
-        if let Ok(dev) = device {
-            println!("GPU: {}", dev.capabilities.adapter_name);
-            println!("Backend: {}", dev.capabilities.backend);
-            assert!(dev.capabilities.max_buffer_size > 0);
-        }
+    #[derive(Debug, thiserror::Error)]
+    enum DeviceTestError {
+        #[error("GPU initialization failed: {message}")]
+        Initialization { message: String },
     }
 
     #[test]
-    fn test_optimal_workgroup_size() {
-        let caps = GpuCapabilities {
+    fn test_device_initialization() -> Result<(), DeviceTestError> {
+        let device = pollster::block_on(GpuDevice::new())
+            .map_err(|message| DeviceTestError::Initialization { message })?;
+        assert!(device.capabilities.max_buffer_size > 0);
+        assert!(device.capabilities.max_compute_workgroup_size_x > 0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_optimal_workgroup_size() -> Result<(), DeviceTestError> {
+        let mut caps = GpuCapabilities {
             max_buffer_size: 1 << 30,
             max_storage_buffer_binding_size: 1 << 27,
             max_compute_workgroup_size_x: 256,
@@ -189,15 +189,12 @@ mod tests {
             backend: "WebGPU".to_string(),
         };
 
-        let device = GpuDevice {
-            device: unsafe { std::mem::zeroed() }, // Mock device (don't use in real code!)
-            queue: unsafe { std::mem::zeroed() },
-            adapter: unsafe { std::mem::zeroed() },
-            capabilities: caps.clone(),
-        };
-
-        assert_eq!(device.optimal_workgroup_size(1024), 256);
-        assert_eq!(device.optimal_workgroup_size(128), 128);
-        assert_eq!(device.optimal_workgroup_size(10), 8);
+        assert_eq!(caps.optimal_workgroup_size(1024), 256);
+        assert_eq!(caps.optimal_workgroup_size(128), 128);
+        assert_eq!(caps.optimal_workgroup_size(10), 8);
+        assert_eq!(caps.optimal_workgroup_size(0), 1);
+        caps.max_compute_workgroup_size_x = 64;
+        assert_eq!(caps.optimal_workgroup_size(1024), 64);
+        Ok(())
     }
 }

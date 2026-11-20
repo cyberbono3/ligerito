@@ -2,7 +2,9 @@
 use alloc::vec::Vec;
 
 use binary_fields::BinaryFieldElement;
-use merkle_tree::{BatchedMerkleProof, CompleteMerkleTree, MerkleRoot};
+#[cfg(feature = "prover")]
+use merkle_tree::CompleteMerkleTree;
+use merkle_tree::{BatchedMerkleProof, MerkleRoot};
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -158,10 +160,35 @@ impl VerifierConfig {
             })
     }
 
-    /// Bind the public parameters into the Fiat-Shamir transcript.
-    pub(crate) fn absorb_into(&self, fs: &mut impl crate::transcript::Transcript) {
-        let mut header = Vec::with_capacity(4 * (4 + 2 * self.recursive_steps));
-        for v in [
+    #[forbid(unsafe_code)]
+    #[warn(clippy::all, clippy::pedantic)]
+    #[deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::dbg_macro,
+        clippy::print_stdout,
+        clippy::await_holding_lock,
+        clippy::allow_attributes
+    )]
+    pub(crate) fn absorb_into<C: crate::opening_transcript::OpeningTranscript>(
+        &self,
+        fs: &mut C,
+    ) -> core::result::Result<(), crate::opening_transcript::DriverError<C::Error>> {
+        use crate::opening_transcript::DriverError;
+        let len = self
+            .recursive_steps
+            .checked_mul(2)
+            .and_then(|n| n.checked_add(4))
+            .and_then(|n| n.checked_mul(4))
+            .ok_or(DriverError::Native(crate::LigeritoError::InvalidProof))?;
+        let mut header = Vec::new();
+        header
+            .try_reserve_exact(len)
+            .map_err(DriverError::Allocation)?;
+        for value in [
             self.initial_dim,
             self.initial_k,
             self.recursive_steps,
@@ -171,9 +198,12 @@ impl VerifierConfig {
         .chain(self.log_dims.iter().copied())
         .chain(self.ks.iter().copied())
         {
-            header.extend_from_slice(&(v as u32).to_le_bytes());
+            let value = u32::try_from(value)
+                .map_err(|_| DriverError::Native(crate::LigeritoError::InvalidProof))?;
+            header.extend_from_slice(&value.to_le_bytes());
         }
-        fs.absorb_bytes(b"ligerito-v1-config", &header);
+        fs.observe_bytes(b"ligerito-v1-config", &header)
+            .map_err(DriverError::Transcript)
     }
 }
 
@@ -183,6 +213,8 @@ impl VerifierConfig {
 /// `cols[c * num_rows .. (c + 1) * num_rows]`. Rows (the Merkle leaves) are
 /// gathered on demand. Build with `ligero::ligero_commit` or
 /// `RecursiveLigeroWitness::from_columns`.
+/// Legacy commitment asserts input shape and encoder message size. The column
+/// constructor asserts nonzero columns and a divisible encoded-buffer length.
 #[cfg(feature = "prover")]
 pub struct RecursiveLigeroWitness<T: BinaryFieldElement> {
     pub(crate) cols: Vec<T>,
@@ -320,6 +352,9 @@ impl<T: BinaryFieldElement, U: BinaryFieldElement> LigeritoProof<T, U> {
 }
 
 /// Finalized Ligerito proof
+///
+/// Legacy postcard serialization through `proof_to_bytes` maps serialization
+/// failure to `LigeritoError::InvalidProof`.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(
@@ -380,4 +415,114 @@ pub fn finalize<T: BinaryFieldElement, U: BinaryFieldElement>(
             .ok_or(crate::LigeritoError::InvalidProof)?,
         eval_rounds: Vec::new(),
     })
+}
+
+#[cfg(all(test, feature = "std"))]
+#[forbid(unsafe_code)]
+#[warn(clippy::all, clippy::pedantic)]
+#[deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::todo,
+    clippy::unimplemented,
+    clippy::dbg_macro,
+    clippy::print_stdout,
+    clippy::await_holding_lock,
+    clippy::allow_attributes
+)]
+mod tests {
+    use super::VerifierConfig;
+    use crate::opening_transcript::{DriverError, OpeningTranscript};
+    use crate::{LigeritoError, Sha256Transcript};
+
+    fn config() -> VerifierConfig {
+        VerifierConfig {
+            recursive_steps: 1,
+            initial_dim: 8,
+            log_dims: vec![7],
+            initial_k: 1,
+            ks: vec![1],
+            num_queries: 160,
+        }
+    }
+
+    #[test]
+    fn b1_config_absorption_matches_fixed_header() -> Result<(), Box<dyn std::error::Error>> {
+        let config = config();
+        assert!(config.is_well_formed());
+        let header = [
+            8, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 160, 0, 0, 0, 7, 0, 0, 0, 1, 0, 0, 0,
+        ];
+        let mut actual = Sha256Transcript::new(7);
+        config.absorb_into(&mut actual)?;
+        let mut expected = Sha256Transcript::new(7);
+        expected.observe_bytes(b"ligerito-v1-config", &header)?;
+        let challenge = actual.sample_challenge()?;
+        assert_eq!(challenge, expected.sample_challenge()?);
+        assert_ne!(challenge, Sha256Transcript::new(7).sample_challenge()?);
+        Ok(())
+    }
+
+    #[test]
+    fn b1_config_length_overflow_precedes_transcript_mutation(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut config = config();
+        assert!(config.is_well_formed());
+        config.recursive_steps = usize::MAX;
+        let mut transcript = Sha256Transcript::new(7);
+        assert!(matches!(
+            config.absorb_into(&mut transcript),
+            Err(DriverError::Native(LigeritoError::InvalidProof))
+        ));
+        assert_eq!(
+            transcript.sample_challenge()?,
+            Sha256Transcript::new(7).sample_challenge()?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn b1_config_capacity_overflow_precedes_transcript_mutation(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut config = config();
+        assert!(config.is_well_formed());
+        let maximum_capacity = usize::try_from(isize::MAX)?;
+        config.recursive_steps = (maximum_capacity / 8)
+            .checked_add(1)
+            .ok_or(LigeritoError::InvalidProof)?;
+        // Exceeding isize::MAX forces capacity rejection before any allocation.
+        assert!(config.recursive_steps > maximum_capacity / 8);
+        let mut transcript = Sha256Transcript::new(7);
+        assert!(matches!(
+            config.absorb_into(&mut transcript),
+            Err(DriverError::Allocation(_))
+        ));
+        assert_eq!(
+            transcript.sample_challenge()?,
+            Sha256Transcript::new(7).sample_challenge()?
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn b1_config_wire_integer_overflow_precedes_transcript_mutation(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut config = config();
+        assert!(config.is_well_formed());
+        config.initial_dim = usize::try_from(u32::MAX)?
+            .checked_add(1)
+            .ok_or(LigeritoError::InvalidProof)?;
+        let mut transcript = Sha256Transcript::new(7);
+        assert!(matches!(
+            config.absorb_into(&mut transcript),
+            Err(DriverError::Native(LigeritoError::InvalidProof))
+        ));
+        assert_eq!(
+            transcript.sample_challenge()?,
+            Sha256Transcript::new(7).sample_challenge()?
+        );
+        Ok(())
+    }
 }

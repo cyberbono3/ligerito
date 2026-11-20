@@ -79,7 +79,6 @@
 //! ```
 
 #![cfg_attr(not(feature = "std"), no_std)]
-#![allow(clippy::all, unused_imports)]
 
 #[cfg(not(feature = "std"))]
 extern crate alloc;
@@ -103,9 +102,12 @@ pub mod autosizer;
 pub mod configs;
 pub mod data_structures;
 pub mod eval_proof;
-pub mod security;
 #[cfg(feature = "op-count")]
 pub mod op_count;
+pub mod opening_transcript;
+#[cfg(feature = "std")]
+pub mod retained;
+pub mod security;
 pub mod sumcheck_polys;
 pub mod sumcheck_verifier;
 pub mod transcript;
@@ -240,11 +242,17 @@ impl core::fmt::Display for LigeritoError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             LigeritoError::InvalidConfig => write!(f, "Invalid configuration"),
-            LigeritoError::VerificationFailed => write!(f, "Proof verification failed"),
+            LigeritoError::VerificationFailed => {
+                write!(f, "Proof verification failed")
+            }
             LigeritoError::InvalidProof => write!(f, "Invalid proof structure"),
             LigeritoError::MerkleError => write!(f, "Merkle tree error"),
-            LigeritoError::SumcheckError => write!(f, "Sumcheck consistency error"),
-            LigeritoError::GpuInitFailed => write!(f, "GPU initialization failed"),
+            LigeritoError::SumcheckError => {
+                write!(f, "Sumcheck consistency error")
+            }
+            LigeritoError::GpuInitFailed => {
+                write!(f, "GPU initialization failed")
+            }
         }
     }
 }

@@ -37,7 +37,9 @@ pub const MAX_LOG_SIZE: u32 = 30;
 /// Format: (log_size, recursive_steps, initial_dim_log, initial_k, [(dim_log, k), ...])
 /// where each round is a 2^dim_log × 2^k matrix and dim_log + k equals the
 /// previous round's dim_log (initial_dim_log for the first round).
-const OPTIMAL_CONFIGS: [(u32, usize, u32, usize, &[(u32, usize)]); 11] = [
+type OptimalConfig = (u32, usize, u32, usize, &'static [(u32, usize)]);
+
+const OPTIMAL_CONFIGS: [OptimalConfig; 11] = [
     // 2^20: 1 recursive step, 2^14 × 2^6 initial, then 2^10 × 2^4
     (20, 1, 14, 6, &[(10, 4)]),
     // 2^21: 1 recursive step, 2^15 × 2^6 initial, then 2^11 × 2^4
@@ -155,7 +157,10 @@ pub fn verifier_config_for_log_size(log_size: u32) -> VerifierConfig {
     let initial_dim = initial_dim_log as usize;
 
     // Build log_dims: each entry is log of row count for that round
-    let log_dims: Vec<usize> = dims_ks.iter().map(|&(dim_log, _)| dim_log as usize).collect();
+    let log_dims: Vec<usize> = dims_ks
+        .iter()
+        .map(|&(dim_log, _)| dim_log as usize)
+        .collect();
 
     let ks: Vec<usize> = dims_ks.iter().map(|&(_, k)| k).collect();
 

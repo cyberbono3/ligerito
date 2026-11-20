@@ -632,43 +632,12 @@ mod tests {
     }
 
     #[test]
-    fn debug_twiddle_computation() {
-        use ligerito_binary_fields::BinaryElem128;
-
-        // Helper function
-        fn next_s<F: BinaryFieldElement>(s_prev: F, s_prev_at_root: F) -> F {
-            s_prev.mul(&s_prev).add(&s_prev_at_root.mul(&s_prev))
+    fn tiny_twiddles_match_hand_derived_values() -> Result<(), Box<dyn std::error::Error>> {
+        for (beta, expected) in [(0, [0, 0, 2]), (1, [0, 1, 3]), (2, [1, 2, 0])] {
+            let actual = compute_twiddles::<BinaryElem128>(2, BinaryElem128::from_bits(beta));
+            assert_eq!(actual, expected.map(BinaryElem128::from_bits));
         }
-
-        // Test with log_n = 4 (n = 16) to match Julia test
-        let log_n = 4;
-        let beta = BinaryElem128::zero();
-
-        println!("Computing twiddles for log_n={}, beta=0", log_n);
-
-        let n = 1 << log_n;
-        let mut layer = vec![BinaryElem128::zero(); 1 << (log_n - 1)];
-
-        // Layer 0
-        println!("\nLayer 0:");
-        for i in 0..layer.len() {
-            layer[i] = beta.add(&BinaryElem128::from_bits((i as u64) << 1));
-            println!("  layer[{}] = {}", i, (i as u64) << 1);
-        }
-        let mut s_prev_at_root = BinaryElem128::one();
-
-        // First iteration
-        println!("\nFirst iteration:");
-        let root_point = layer[0].add(&layer[1]);
-        println!("  root_point = layer[0] + layer[1] = 0 + 2 = 2");
-
-        // This is where the issue might be
-        // next_s(2, 1) = 2^2 + 1*2 = 4 + 2 = 6
-        let computed = next_s(BinaryElem128::from_bits(2), BinaryElem128::one());
-        println!(
-            "  next_s(2, 1) should give 6, got: {}",
-            computed == BinaryElem128::from_bits(6)
-        );
+        Ok(())
     }
 
     #[test]

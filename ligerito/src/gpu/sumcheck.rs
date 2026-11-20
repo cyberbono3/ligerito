@@ -14,7 +14,7 @@ use super::device::GpuDevice;
 use super::shaders;
 use binary_fields::BinaryFieldElement;
 use bytemuck::{Pod, Zeroable};
-use wgpu::{BindGroup, BindGroupLayout, Buffer, BufferUsages, ComputePipeline};
+use wgpu::{BindGroupLayout, BufferUsages, ComputePipeline};
 
 /// Sumcheck parameters
 #[repr(C)]
@@ -429,9 +429,7 @@ impl GpuSumcheck {
         let mut local_sks_x = vec![T::zero(); sks_vks.len()];
         let mut local_basis = vec![U::zero(); basis_size];
 
-        for (i, (&contribution, &query)) in
-            contributions.iter().zip(sorted_queries.iter()).enumerate()
-        {
+        for (&contribution, &query) in contributions.iter().zip(sorted_queries.iter()) {
             enforced_sum = enforced_sum.add(&contribution);
 
             let qf = T::from_bits(query as u64);
