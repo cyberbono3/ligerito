@@ -52,7 +52,9 @@ std = [
     "serde?/std",
     "codec?/std",
     "scale-info?/std",
+    "sp-io?/std",
     "thiserror",
+    "dep:tracing",
 ]
 
 # Functionality: include prover or verifier-only
@@ -195,6 +197,7 @@ core_affinity = { version = "0.8", optional = true }
 
 # Error handling (std only - for no_std we use custom errors)
 thiserror = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
 
 # CLI dependencies
 clap = { version = "4.4", features = ["derive"], optional = true }
@@ -253,3 +256,8 @@ required-features = ["op-count"]
 [[bench]]
 name = "ligerito_bench"
 harness = false
+
+[[test]]
+name = "b1_state"
+path = "tests/b1_state.rs"
+required-features = ["std", "prover"]

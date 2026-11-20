@@ -4,7 +4,6 @@ use alloc::vec::Vec;
 
 use ligerito_binary_fields::BinaryElem32;
 
-
 /// FFT butterfly using SIMD for GF(2^32)
 #[inline(always)]
 fn fft_mul_simd(v: &mut [BinaryElem32], lambda: BinaryElem32) {

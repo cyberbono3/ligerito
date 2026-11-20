@@ -379,22 +379,8 @@ impl BinaryFieldElement for BinaryElem64 {
 // φ₁₆→₁₂₈ = φ₃₂→₁₂₈ ∘ φ₁₆→₃₂, so conversions commute.
 
 const EMBED_16_IN_32_BASIS: [u32; 16] = [
-    0x1,
-    0xdcbf24b2,
-    0xf491ccf4,
-    0x54da6400,
-    0x61a14d8e,
-    0xecb96800,
-    0x18ebb52f,
-    0xb5c4f88b,
-    0x4164c846,
-    0x831a6455,
-    0x188bc04c,
-    0x4f33263e,
-    0x50a6847a,
-    0x792a7847,
-    0x7a8bf7a3,
-    0x6ae6d059,
+    0x1, 0xdcbf24b2, 0xf491ccf4, 0x54da6400, 0x61a14d8e, 0xecb96800, 0x18ebb52f, 0xb5c4f88b,
+    0x4164c846, 0x831a6455, 0x188bc04c, 0x4f33263e, 0x50a6847a, 0x792a7847, 0x7a8bf7a3, 0x6ae6d059,
 ];
 
 const EMBED_32_IN_128_BASIS: [u128; 32] = [

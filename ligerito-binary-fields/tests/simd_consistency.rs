@@ -6,7 +6,11 @@ use ligerito_binary_fields::{BinaryElem128, BinaryElem32, BinaryFieldElement};
 
 fn ref_mul(mut a: u128, mut b: u128, bits: u32, irr_low: u128) -> u128 {
     let top = 1u128 << (bits - 1);
-    let mask = if bits == 128 { u128::MAX } else { (1u128 << bits) - 1 };
+    let mask = if bits == 128 {
+        u128::MAX
+    } else {
+        (1u128 << bits) - 1
+    };
     let mut r = 0u128;
     while b != 0 {
         if b & 1 == 1 {
@@ -46,11 +50,18 @@ fn field_mul_matches_reference() {
         let (a, b) = (a as u32, b as u32);
         let irr32 = 0b11001 | (1 << 7) | (1 << 9) | (1 << 15);
         let got = BinaryElem32::from(a).mul(&BinaryElem32::from(b));
-        assert_eq!(got, BinaryElem32::from(ref_mul(a as u128, b as u128, 32, irr32) as u32));
+        assert_eq!(
+            got,
+            BinaryElem32::from(ref_mul(a as u128, b as u128, 32, irr32) as u32)
+        );
     }
 }
 
-#[cfg(all(feature = "hardware-accel", target_arch = "x86_64", target_feature = "pclmulqdq"))]
+#[cfg(all(
+    feature = "hardware-accel",
+    target_arch = "x86_64",
+    target_feature = "pclmulqdq"
+))]
 #[test]
 fn fft_butterfly_tiers_match_definition() {
     use ligerito_binary_fields::simd;

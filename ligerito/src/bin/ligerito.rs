@@ -1,4 +1,3 @@
-#![allow(clippy::all, unused_imports)]
 //! Ligerito CLI - Prove and verify polynomial commitments via stdin/stdout
 //!
 //! # Examples
@@ -354,7 +353,9 @@ fn prove_command(
             let hex_str = hex::encode(&encoded);
             println!("{}", hex_str);
         }
-        _ => anyhow::bail!("Unknown format: {}. Use 'bincode' or 'hex'", format),
+        _ => {
+            anyhow::bail!("Unknown format: {}. Use 'bincode' or 'hex'", format)
+        }
     }
 
     Ok(())
@@ -396,7 +397,9 @@ fn verify_command(
             let hex_str = String::from_utf8(buffer).context("Invalid UTF-8 in hex input")?;
             hex::decode(hex_str.trim()).context("Failed to decode hex")?
         }
-        _ => anyhow::bail!("Unknown format: {}. Use 'bincode' or 'hex'", format),
+        _ => {
+            anyhow::bail!("Unknown format: {}. Use 'bincode' or 'hex'", format)
+        }
     };
 
     // Deserialize proof

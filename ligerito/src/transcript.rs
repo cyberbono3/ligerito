@@ -5,7 +5,7 @@
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "transcript-merlin"))]
 use std::collections::HashSet;
 
 use binary_fields::BinaryFieldElement;
@@ -122,7 +122,8 @@ impl Transcript for MerlinTranscript {
     fn get_challenge<F: BinaryFieldElement>(&mut self) -> F {
         let mut bytes = [0u8; 32];
         let n = core::mem::size_of::<F>();
-        self.transcript.challenge_bytes(b"challenge", &mut bytes[..n]);
+        self.transcript
+            .challenge_bytes(b"challenge", &mut bytes[..n]);
         elem_from_le_bytes(&bytes[..n])
     }
 
@@ -199,41 +200,75 @@ impl Sha256Transcript {
         transcript
     }
 
-    /// Squeeze deterministic bytes from the transcript.
-    /// Uses pure SHA256 expansion - no external RNG dependencies.
-    /// This ensures identical output on native, WASM, and all platforms.
-    fn squeeze_bytes(&mut self, count: usize) -> Vec<u8> {
+    #[forbid(unsafe_code)]
+    #[warn(clippy::all, clippy::pedantic)]
+    #[deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::dbg_macro,
+        clippy::print_stdout,
+        clippy::await_holding_lock,
+        clippy::allow_attributes
+    )]
+    fn absorb_counter_digest(&mut self) -> [u8; 32] {
         self.hasher.update(self.counter.to_le_bytes());
+        self.hasher.clone().finalize().into()
+    }
+
+    #[forbid(unsafe_code)]
+    #[warn(clippy::all, clippy::pedantic)]
+    #[deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::dbg_macro,
+        clippy::print_stdout,
+        clippy::await_holding_lock,
+        clippy::allow_attributes
+    )]
+    fn squeeze_bytes(&mut self, count: usize) -> Vec<u8> {
+        let digest = self.absorb_counter_digest();
         self.counter += 1;
-
-        let digest = self.hasher.clone().finalize();
-
         if count <= 32 {
             digest[..count].to_vec()
         } else {
-            // For more than 32 bytes, hash repeatedly
             let mut result = Vec::with_capacity(count);
-            result.extend_from_slice(&digest[..]);
-
+            result.extend_from_slice(&digest);
             while result.len() < count {
-                self.hasher.update(self.counter.to_le_bytes());
+                let digest = self.absorb_counter_digest();
                 self.counter += 1;
-                let digest = self.hasher.clone().finalize();
                 let needed = count - result.len();
                 result.extend_from_slice(&digest[..needed.min(32)]);
             }
-
             result
         }
     }
 }
 
 impl Transcript for Sha256Transcript {
+    #[forbid(unsafe_code)]
+    #[warn(clippy::all, clippy::pedantic)]
+    #[deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::dbg_macro,
+        clippy::print_stdout,
+        clippy::await_holding_lock,
+        clippy::allow_attributes
+    )]
     fn absorb_root(&mut self, root: &MerkleRoot) {
         if let Some(hash) = &root.root {
             if self.domain_separated {
                 self.hasher.update(b"merkle_root");
-                self.hasher.update(&(hash.len() as u64).to_le_bytes());
+                self.hasher.update((hash.len() as u64).to_le_bytes());
             }
             self.hasher.update(hash);
         }
@@ -245,7 +280,7 @@ impl Transcript for Sha256Transcript {
         };
         if self.domain_separated {
             self.hasher.update(b"field_elements");
-            self.hasher.update(&(bytes.len() as u64).to_le_bytes());
+            self.hasher.update((bytes.len() as u64).to_le_bytes());
         }
         self.hasher.update(bytes);
     }
@@ -256,14 +291,27 @@ impl Transcript for Sha256Transcript {
         };
         if self.domain_separated {
             self.hasher.update(b"field_element");
-            self.hasher.update(&(bytes.len() as u64).to_le_bytes());
+            self.hasher.update((bytes.len() as u64).to_le_bytes());
         }
         self.hasher.update(bytes);
     }
 
+    #[forbid(unsafe_code)]
+    #[warn(clippy::all, clippy::pedantic)]
+    #[deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::dbg_macro,
+        clippy::print_stdout,
+        clippy::await_holding_lock,
+        clippy::allow_attributes
+    )]
     fn absorb_bytes(&mut self, label: &[u8], data: &[u8]) {
         self.hasher.update(label);
-        self.hasher.update(&(data.len() as u64).to_le_bytes());
+        self.hasher.update((data.len() as u64).to_le_bytes());
         self.hasher.update(data);
     }
 
@@ -580,3 +628,5 @@ impl Transcript for FiatShamir {
         }
     }
 }
+
+mod opening;

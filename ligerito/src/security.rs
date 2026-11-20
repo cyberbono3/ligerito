@@ -48,7 +48,10 @@ const QUERIES_100_BITS: [usize; 5] = [usize::MAX, 241, 148, 121, 110];
 /// Queries needed for 100-bit soundness of one Ligero row test at rate
 /// `2^-log_inv_rate` in the unique-decoding regime.
 pub fn queries_for_100_bits(log_inv_rate: usize) -> Option<usize> {
-    QUERIES_100_BITS.get(log_inv_rate).copied().filter(|&q| q != usize::MAX)
+    QUERIES_100_BITS
+        .get(log_inv_rate)
+        .copied()
+        .filter(|&q| q != usize::MAX)
 }
 
 #[cfg(feature = "std")]
@@ -169,11 +172,19 @@ pub fn analyze_with_challenge_bits(config: &VerifierConfig, bits: u32) -> Securi
             log_message_len: log_m,
             log_columns: k,
             queries: q,
-            query_bits: if q as f64 >= n { f64::INFINITY } else { q as f64 * per_query },
+            query_bits: if q as f64 >= n {
+                f64::INFINITY
+            } else {
+                q as f64 * per_query
+            },
             proximity_gap_bits: over_field(k as f64 * n, bits),
             row_batching_bits: over_field(q as f64 - 1.0, bits),
             sumcheck_bits: over_field(2.0 * sumcheck_rounds as f64, bits),
-            glue_bits: if t == 0 { f64::INFINITY } else { over_field(1.0, bits) },
+            glue_bits: if t == 0 {
+                f64::INFINITY
+            } else {
+                over_field(1.0, bits)
+            },
         });
     }
     SecurityReport {
@@ -186,7 +197,10 @@ pub fn analyze_with_challenge_bits(config: &VerifierConfig, bits: u32) -> Securi
 impl core::fmt::Display for SecurityReport {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         writeln!(f, "analysis {}", self.analysis_version)?;
-        writeln!(f, "level  log_m  k    Q    query  prox-gap  batch  sumcheck  glue   level-bits")?;
+        writeln!(
+            f,
+            "level  log_m  k    Q    query  prox-gap  batch  sumcheck  glue   level-bits"
+        )?;
         for l in &self.levels {
             writeln!(
                 f,
@@ -222,7 +236,11 @@ mod tests {
         for (log_inv_rate, q) in [(1, 241), (2, 148), (3, 121), (4, 110)] {
             let rho = (-(log_inv_rate as f64)).exp2();
             let per = -(1.0 - (1.0 - rho) / 2.0).log2();
-            assert_eq!((100.0 / per).ceil() as usize, q, "log_inv_rate {log_inv_rate}");
+            assert_eq!(
+                (100.0 / per).ceil() as usize,
+                q,
+                "log_inv_rate {log_inv_rate}"
+            );
             assert_eq!(queries_for_100_bits(log_inv_rate), Some(q));
         }
         assert_eq!(queries_for_100_bits(0), None);

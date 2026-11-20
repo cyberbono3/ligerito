@@ -1132,7 +1132,11 @@ mod tests {
 
 /// Fastest butterfly available for the target this crate was compiled for.
 #[inline]
-pub fn fft_butterfly_gf32_fast(u: &mut [BinaryElem32], w: &mut [BinaryElem32], lambda: BinaryElem32) {
+pub fn fft_butterfly_gf32_fast(
+    u: &mut [BinaryElem32],
+    w: &mut [BinaryElem32],
+    lambda: BinaryElem32,
+) {
     assert_eq!(u.len(), w.len());
     #[cfg(all(
         feature = "hardware-accel",
@@ -1156,7 +1160,11 @@ pub fn fft_butterfly_gf32_fast(u: &mut [BinaryElem32], w: &mut [BinaryElem32], l
         unsafe { butterfly_sse(u, w, lambda) };
         return;
     }
-    #[cfg(all(feature = "hardware-accel", target_arch = "wasm32", target_feature = "simd128"))]
+    #[cfg(all(
+        feature = "hardware-accel",
+        target_arch = "wasm32",
+        target_feature = "simd128"
+    ))]
     {
         return fft_butterfly_gf32_wasm_simd(u, w, lambda);
     }
@@ -1164,33 +1172,58 @@ pub fn fft_butterfly_gf32_fast(u: &mut [BinaryElem32], w: &mut [BinaryElem32], l
     fft_butterfly_gf32_scalar(u, w, lambda)
 }
 
-#[cfg(all(feature = "hardware-accel", target_arch = "x86_64", target_feature = "pclmulqdq"))]
+#[cfg(all(
+    feature = "hardware-accel",
+    target_arch = "x86_64",
+    target_feature = "pclmulqdq"
+))]
 #[inline(always)]
 unsafe fn reduce_lanes_128(p: core::arch::x86_64::__m128i) -> core::arch::x86_64::__m128i {
     use core::arch::x86_64::*;
     let hi = _mm_srli_epi64(p, 32);
     let tmp = _mm_xor_si128(
-        _mm_xor_si128(_mm_xor_si128(hi, _mm_srli_epi64(hi, 17)), _mm_xor_si128(_mm_srli_epi64(hi, 23), _mm_srli_epi64(hi, 25))),
+        _mm_xor_si128(
+            _mm_xor_si128(hi, _mm_srli_epi64(hi, 17)),
+            _mm_xor_si128(_mm_srli_epi64(hi, 23), _mm_srli_epi64(hi, 25)),
+        ),
         _mm_xor_si128(_mm_srli_epi64(hi, 28), _mm_srli_epi64(hi, 29)),
     );
     let r = _mm_xor_si128(
-        _mm_xor_si128(_mm_xor_si128(p, tmp), _mm_xor_si128(_mm_slli_epi64(tmp, 3), _mm_slli_epi64(tmp, 4))),
-        _mm_xor_si128(_mm_xor_si128(_mm_slli_epi64(tmp, 7), _mm_slli_epi64(tmp, 9)), _mm_slli_epi64(tmp, 15)),
+        _mm_xor_si128(
+            _mm_xor_si128(p, tmp),
+            _mm_xor_si128(_mm_slli_epi64(tmp, 3), _mm_slli_epi64(tmp, 4)),
+        ),
+        _mm_xor_si128(
+            _mm_xor_si128(_mm_slli_epi64(tmp, 7), _mm_slli_epi64(tmp, 9)),
+            _mm_slli_epi64(tmp, 15),
+        ),
     );
     // only the low 32 bits of each lane are the reduced value; callers
     // discard the rest
     r
 }
 
-#[cfg(all(feature = "hardware-accel", target_arch = "x86_64", target_feature = "pclmulqdq"))]
+#[cfg(all(
+    feature = "hardware-accel",
+    target_arch = "x86_64",
+    target_feature = "pclmulqdq"
+))]
 #[inline(always)]
 unsafe fn clmul_reduce_scalar(lambda: u32, w: u32) -> u32 {
     use core::arch::x86_64::*;
-    let p = _mm_clmulepi64_si128(_mm_cvtsi64_si128(lambda as i64), _mm_cvtsi64_si128(w as i64), 0x00);
+    let p = _mm_clmulepi64_si128(
+        _mm_cvtsi64_si128(lambda as i64),
+        _mm_cvtsi64_si128(w as i64),
+        0x00,
+    );
     reduce_gf32_inline(_mm_cvtsi128_si64(p) as u64) as u32
 }
 
-#[cfg(all(feature = "hardware-accel", target_arch = "x86_64", target_feature = "pclmulqdq"))]
+#[cfg(all(
+    feature = "hardware-accel",
+    target_arch = "x86_64",
+    target_feature = "pclmulqdq"
+))]
 unsafe fn butterfly_sse(u: &mut [BinaryElem32], w: &mut [BinaryElem32], lambda: BinaryElem32) {
     use core::arch::x86_64::*;
     let n = u.len();
@@ -1211,7 +1244,10 @@ unsafe fn butterfly_sse(u: &mut [BinaryElem32], w: &mut [BinaryElem32], lambda: 
         let r01 = reduce_lanes_128(_mm_unpacklo_epi64(p0, p1));
         let r23 = reduce_lanes_128(_mm_unpacklo_epi64(p2, p3));
         // gather the low dword of each u64 lane: [r0, r1, r2, r3]
-        let prod = _mm_castps_si128(_mm_shuffle_ps::<0b10_00_10_00>(_mm_castsi128_ps(r01), _mm_castsi128_ps(r23)));
+        let prod = _mm_castps_si128(_mm_shuffle_ps::<0b10_00_10_00>(
+            _mm_castsi128_ps(r01),
+            _mm_castsi128_ps(r23),
+        ));
         let un = _mm_xor_si128(_mm_loadu_si128(up.add(i) as *const __m128i), prod);
         _mm_storeu_si128(up.add(i) as *mut __m128i, un);
         _mm_storeu_si128(wp.add(i) as *mut __m128i, _mm_xor_si128(wv, un));
@@ -1244,12 +1280,21 @@ unsafe fn butterfly_avx512(u: &mut [BinaryElem32], w: &mut [BinaryElem32], lambd
     unsafe fn reduce(p: __m512i) -> __m512i {
         let hi = _mm512_srli_epi64(p, 32);
         let tmp = _mm512_xor_si512(
-            _mm512_xor_si512(_mm512_xor_si512(hi, _mm512_srli_epi64(hi, 17)), _mm512_xor_si512(_mm512_srli_epi64(hi, 23), _mm512_srli_epi64(hi, 25))),
+            _mm512_xor_si512(
+                _mm512_xor_si512(hi, _mm512_srli_epi64(hi, 17)),
+                _mm512_xor_si512(_mm512_srli_epi64(hi, 23), _mm512_srli_epi64(hi, 25)),
+            ),
             _mm512_xor_si512(_mm512_srli_epi64(hi, 28), _mm512_srli_epi64(hi, 29)),
         );
         _mm512_xor_si512(
-            _mm512_xor_si512(_mm512_xor_si512(p, tmp), _mm512_xor_si512(_mm512_slli_epi64(tmp, 3), _mm512_slli_epi64(tmp, 4))),
-            _mm512_xor_si512(_mm512_xor_si512(_mm512_slli_epi64(tmp, 7), _mm512_slli_epi64(tmp, 9)), _mm512_slli_epi64(tmp, 15)),
+            _mm512_xor_si512(
+                _mm512_xor_si512(p, tmp),
+                _mm512_xor_si512(_mm512_slli_epi64(tmp, 3), _mm512_slli_epi64(tmp, 4)),
+            ),
+            _mm512_xor_si512(
+                _mm512_xor_si512(_mm512_slli_epi64(tmp, 7), _mm512_slli_epi64(tmp, 9)),
+                _mm512_slli_epi64(tmp, 15),
+            ),
         )
     }
     #[inline(always)]

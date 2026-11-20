@@ -15,13 +15,13 @@ pub fn evaluate_lagrange_basis<F: BinaryFieldElement>(rs: &[F]) -> Vec<F> {
     let mut current_layer = vec![one.add(&rs[0]), rs[0]];
     let mut len = 2;
 
-    for i in 1..rs.len() {
+    for ri in &rs[1..] {
         let mut next_layer = Vec::with_capacity(2 * len);
-        let ri_plus_one = one.add(&rs[i]);
+        let ri_plus_one = one.add(ri);
 
-        for j in 0..len {
-            next_layer.push(current_layer[j].mul(&ri_plus_one));
-            next_layer.push(current_layer[j].mul(&rs[i]));
+        for value in &current_layer {
+            next_layer.push(value.mul(&ri_plus_one));
+            next_layer.push(value.mul(ri));
         }
 
         current_layer = next_layer;
@@ -84,14 +84,15 @@ pub fn eval_sk_at_vks<F: BinaryFieldElement>(n: usize) -> Vec<F> {
 ///
 /// `sks_x` is scratch (length ≥ log₂ |basis|) and receives `s_j(qf)`;
 /// `sks_vks` comes from `eval_sk_at_vks(|basis|)`.
-pub fn evaluate_scaled_basis_inplace<F: BinaryFieldElement, U: BinaryFieldElement>(
+pub fn evaluate_scaled_basis_inplace<F, U>(
     sks_x: &mut [F],
     basis: &mut [U],
     sks_vks: &[F],
     qf: F,
     scale: U,
 ) where
-    U: From<F>,
+    F: BinaryFieldElement,
+    U: BinaryFieldElement + From<F>,
 {
     let n = basis.len();
     assert!(n.is_power_of_two(), "basis length must be a power of two");
@@ -108,9 +109,9 @@ pub fn evaluate_scaled_basis_inplace<F: BinaryFieldElement, U: BinaryFieldElemen
 
     // tensor product: bit j of the index selects the factor s_j(qf)
     basis[0] = scale;
-    for j in 0..k {
+    for (j, value) in sks_x.iter().take(k).enumerate() {
         let half = 1 << j;
-        let s = U::from(sks_x[j]);
+        let s = U::from(*value);
         for i in 0..half {
             basis[half + i] = basis[i].mul(&s);
         }
@@ -191,6 +192,29 @@ where
     }
 }
 
+/// Hash a row for Merkle tree commitment
+/// Used by both prover and verifier
+pub fn hash_row<F: BinaryFieldElement>(row: &[F]) -> merkle_tree::Hash {
+    #[cfg(feature = "op-count")]
+    crate::op_count::bump_row_hash();
+    use sha2::{Digest, Sha256};
+
+    let mut hasher = Sha256::new();
+
+    // Hash row length for domain separation
+    hasher.update((row.len() as u32).to_le_bytes());
+
+    // Hash each element
+    let elem_size = core::mem::size_of::<F>();
+    for elem in row.iter() {
+        let bytes =
+            unsafe { core::slice::from_raw_parts(elem as *const F as *const u8, elem_size) };
+        hasher.update(bytes);
+    }
+
+    hasher.finalize().into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -238,8 +262,12 @@ mod tests {
 
     #[test]
     fn test_partial_eval_lift_matches_fold() {
-        let poly: Vec<BinaryElem32> = (0..1024u32).map(|i| BinaryElem32::from(i.wrapping_mul(2654435761))).collect();
-        let rho: Vec<BinaryElem128> = (0..5).map(|i| BinaryElem128::from_bits(0xABC + i)).collect();
+        let poly: Vec<BinaryElem32> = (0..1024u32)
+            .map(|i| BinaryElem32::from(i.wrapping_mul(2654435761)))
+            .collect();
+        let rho: Vec<BinaryElem128> = (0..5)
+            .map(|i| BinaryElem128::from_bits(0xABC + i))
+            .collect();
         let mut lifted: Vec<BinaryElem128> = poly.iter().map(|&x| x.into()).collect();
         partial_eval_multilinear(&mut lifted, &rho);
         assert_eq!(partial_eval_lift(&poly, &rho), lifted);
@@ -299,7 +327,7 @@ mod tests {
                 .collect();
             let mut sks_x = vec![F::zero(); sks_vks.len()];
             let mut basis = vec![F::zero(); m];
-            for q in 0..n {
+            for (q, _) in cols[0].iter().enumerate() {
                 let qf = F::from_bits(q as u64);
                 evaluate_scaled_basis_inplace(&mut sks_x, &mut basis, &sks_vks, qf, F::one());
                 for i in 0..m {
@@ -311,27 +339,4 @@ mod tests {
         check::<BinaryElem32>(64);
         check::<BinaryElem128>(32);
     }
-}
-
-/// Hash a row for Merkle tree commitment
-/// Used by both prover and verifier
-pub fn hash_row<F: BinaryFieldElement>(row: &[F]) -> merkle_tree::Hash {
-    #[cfg(feature = "op-count")]
-    crate::op_count::bump_row_hash();
-    use sha2::{Digest, Sha256};
-
-    let mut hasher = Sha256::new();
-
-    // Hash row length for domain separation
-    hasher.update((row.len() as u32).to_le_bytes());
-
-    // Hash each element
-    let elem_size = core::mem::size_of::<F>();
-    for elem in row.iter() {
-        let bytes =
-            unsafe { core::slice::from_raw_parts(elem as *const F as *const u8, elem_size) };
-        hasher.update(bytes);
-    }
-
-    hasher.finalize().into()
 }

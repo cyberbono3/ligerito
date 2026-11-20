@@ -32,6 +32,23 @@ pub fn poly2mat<F: BinaryFieldElement>(
 /// so the generator row for query `q` is `X_i(from_bits(q))`; see
 /// `utils::evaluate_scaled_basis_inplace`).
 #[cfg(feature = "prover")]
+#[forbid(unsafe_code)]
+#[warn(clippy::all, clippy::pedantic)]
+#[deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::todo,
+    clippy::unimplemented,
+    clippy::dbg_macro,
+    clippy::print_stdout,
+    clippy::await_holding_lock,
+    clippy::allow_attributes
+)]
+#[expect(
+    clippy::ptr_arg,
+    reason = "Preserve the existing public function-pointer signature."
+)]
 pub fn encode_cols<F: BinaryFieldElement + Send + Sync + bytemuck::Pod + 'static>(
     poly_mat: &mut Vec<Vec<F>>,
     rs: &ReedSolomon<F>,
@@ -89,6 +106,23 @@ pub fn hash_row<F: BinaryFieldElement>(row: &[F]) -> Hash {
 /// Commit to `poly` laid out as an `m × n` message matrix (see `poly2mat`):
 /// RS-encode every column to length `4m` and Merkle-commit the rows.
 #[cfg(feature = "prover")]
+#[forbid(unsafe_code)]
+#[warn(clippy::all, clippy::pedantic)]
+#[deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::todo,
+    clippy::unimplemented,
+    clippy::dbg_macro,
+    clippy::print_stdout,
+    clippy::await_holding_lock,
+    clippy::allow_attributes
+)]
+#[expect(
+    clippy::missing_panics_doc,
+    reason = "RecursiveLigeroWitness documents legacy geometry assertions."
+)]
 pub fn ligero_commit<F: BinaryFieldElement + Send + Sync + bytemuck::Pod + 'static>(
     poly: &[F],
     m: usize,
@@ -99,60 +133,144 @@ pub fn ligero_commit<F: BinaryFieldElement + Send + Sync + bytemuck::Pod + 'stat
     let block = rs.block_length();
     assert_eq!(rs.message_length(), m);
 
-    // Column-major buffer; the parity region stays zero before encoding.
-    // zeroed_vec gets zero pages from the allocator instead of writing the
-    // whole buffer up front (F is Pod, so all-zero bits is F::zero()).
-    let mut cols: Vec<F> = bytemuck::zeroed_vec(n * block);
+    let cols: Vec<F> = bytemuck::zeroed_vec(n * block);
+    encode_owned_columns(poly, n, rs, cols)
+}
 
-    // Fill: tiles of message rows in parallel. Each tile reads its rows
-    // contiguously and writes a disjoint range of every column.
-    const ROWS_PER_TILE: usize = 4096;
-    struct ColsPtr<F>(*mut F);
-    // SAFETY: tiles write disjoint index sets (row range × all columns)
-    unsafe impl<F> Send for ColsPtr<F> {}
-    unsafe impl<F> Sync for ColsPtr<F> {}
-    let dst = ColsPtr(cols.as_mut_ptr());
-    let fill_tile = |(t, tile): (usize, &[F])| {
-        let r0 = t * ROWS_PER_TILE;
-        let p = &dst;
-        for (i, row) in tile.chunks_exact(n).enumerate() {
-            for (c, &v) in row.iter().enumerate() {
-                // SAFETY: c * block + r0 + i < n * block, unique per (tile, i, c)
-                unsafe { *p.0.add(c * block + r0 + i) = v };
-            }
+#[cfg(all(feature = "std", feature = "prover"))]
+#[forbid(unsafe_code)]
+#[warn(clippy::all, clippy::pedantic)]
+#[deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::todo,
+    clippy::unimplemented,
+    clippy::dbg_macro,
+    clippy::print_stdout,
+    clippy::await_holding_lock,
+    clippy::allow_attributes
+)]
+pub(crate) fn try_ligero_commit<F>(
+    poly: &[F],
+    columns: usize,
+    rs: &ReedSolomon<F>,
+) -> Result<RecursiveLigeroWitness<F>, crate::retained::Error>
+where
+    F: BinaryFieldElement + Send + Sync + bytemuck::Pod + 'static,
+{
+    let mut encoded = Vec::new();
+    let length = columns
+        .checked_mul(rs.block_length())
+        .ok_or(crate::retained::Error::Overflow)?;
+    encoded.try_reserve_exact(length)?;
+    encoded.resize(length, F::zero());
+    Ok(encode_owned_columns(poly, columns, rs, encoded))
+}
+
+#[cfg(feature = "prover")]
+#[forbid(unsafe_code)]
+#[warn(clippy::all, clippy::pedantic)]
+#[deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::todo,
+    clippy::unimplemented,
+    clippy::dbg_macro,
+    clippy::print_stdout,
+    clippy::await_holding_lock,
+    clippy::allow_attributes
+)]
+fn encode_owned_columns<F>(
+    poly: &[F],
+    columns: usize,
+    rs: &ReedSolomon<F>,
+    mut encoded: Vec<F>,
+) -> RecursiveLigeroWitness<F>
+where
+    F: BinaryFieldElement + Send + Sync + bytemuck::Pod + 'static,
+{
+    #[cfg(test)]
+    COMMIT_COUNTS.with(|counts| {
+        let (encodings, trees) = counts.get();
+        counts.set((encodings + 1, trees));
+    });
+    let block = rs.block_length();
+    #[cfg(feature = "parallel")]
+    let inner = columns < rayon::current_num_threads();
+    #[cfg(not(feature = "parallel"))]
+    let inner = false;
+    let encode_column = |(column, data): (usize, &mut [F])| {
+        for (row, value) in data.iter_mut().take(rs.message_length()).enumerate() {
+            *value = poly[row * columns + column];
         }
+        reed_solomon::encode_non_systematic_with_parallel(rs, data, inner);
     };
     #[cfg(feature = "parallel")]
-    poly.par_chunks(ROWS_PER_TILE * n).enumerate().for_each(fill_tile);
+    encoded
+        .par_chunks_mut(block)
+        .enumerate()
+        .for_each(encode_column);
     #[cfg(not(feature = "parallel"))]
-    poly.chunks(ROWS_PER_TILE * n).enumerate().for_each(fill_tile);
+    encoded
+        .chunks_mut(block)
+        .enumerate()
+        .for_each(encode_column);
+    RecursiveLigeroWitness::from_columns(encoded, columns)
+}
 
-    // Encode: one task per column; with fewer columns than threads, let each
-    // column's FFT fork as well.
-    #[cfg(feature = "parallel")]
-    {
-        let inner = n < rayon::current_num_threads();
-        cols.par_chunks_mut(block)
-            .for_each(|col| reed_solomon::encode_non_systematic_with_parallel(rs, col, inner));
-    }
-    #[cfg(not(feature = "parallel"))]
-    for col in cols.chunks_mut(block) {
-        reed_solomon::encode_non_systematic_with_parallel(rs, col, false);
-    }
+#[cfg(all(test, feature = "prover"))]
+std::thread_local! {
+    static COMMIT_COUNTS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+}
 
-    RecursiveLigeroWitness::from_columns(cols, n)
+#[cfg(all(test, feature = "prover"))]
+#[forbid(unsafe_code)]
+#[warn(clippy::all, clippy::pedantic)]
+#[deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::todo,
+    clippy::unimplemented,
+    clippy::dbg_macro,
+    clippy::print_stdout,
+    clippy::await_holding_lock,
+    clippy::allow_attributes
+)]
+pub(crate) fn commitment_counts() -> (usize, usize) {
+    COMMIT_COUNTS.with(std::cell::Cell::get)
 }
 
 #[cfg(feature = "prover")]
 impl<F: BinaryFieldElement + Send + Sync + bytemuck::Pod> RecursiveLigeroWitness<F> {
     /// Merkle-commit the rows of a column-major matrix with `num_cols` columns.
+    #[forbid(unsafe_code)]
+    #[warn(clippy::all, clippy::pedantic)]
+    #[deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::dbg_macro,
+        clippy::print_stdout,
+        clippy::await_holding_lock,
+        clippy::allow_attributes
+    )]
+    #[expect(
+        clippy::missing_panics_doc,
+        reason = "RecursiveLigeroWitness documents legacy geometry assertions."
+    )]
+    #[must_use]
     pub fn from_columns(cols: Vec<F>, num_cols: usize) -> Self {
-        assert!(num_cols > 0 && cols.len() % num_cols == 0);
+        const TILE: usize = 256;
+        assert!(num_cols > 0 && cols.len().is_multiple_of(num_cols));
         let num_rows = cols.len() / num_cols;
 
         // Hash rows in tiles: gather a tile of rows into a small buffer
         // (contiguous reads from every column), then hash each row.
-        const TILE: usize = 256;
         let hash_tile = |(t, out): (usize, &mut [Hash])| {
             let r0 = t * TILE;
             let rows = out.len();
@@ -173,6 +291,11 @@ impl<F: BinaryFieldElement + Send + Sync + bytemuck::Pod> RecursiveLigeroWitness
         #[cfg(not(feature = "parallel"))]
         hashes.chunks_mut(TILE).enumerate().for_each(hash_tile);
 
+        #[cfg(test)]
+        COMMIT_COUNTS.with(|counts| {
+            let (encodings, trees) = counts.get();
+            counts.set((encodings, trees + 1));
+        });
         let tree = build_merkle_tree(&hashes);
         RecursiveLigeroWitness {
             cols,
@@ -180,5 +303,46 @@ impl<F: BinaryFieldElement + Send + Sync + bytemuck::Pod> RecursiveLigeroWitness
             num_cols,
             tree,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![forbid(unsafe_code)]
+    #![warn(clippy::all, clippy::pedantic)]
+    #![deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::dbg_macro,
+        clippy::print_stdout,
+        clippy::await_holding_lock,
+        clippy::allow_attributes
+    )]
+
+    use binary_fields::{BinaryElem128, BinaryFieldElement};
+
+    use super::encode_cols;
+
+    #[test]
+    fn b1_legacy_column_encoding_matches_degree_one_native_oracle(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let encoder = reed_solomon::reed_solomon::<BinaryElem128>(2, 8);
+        for parallel in [false, true] {
+            let mut matrix = vec![vec![BinaryElem128::zero(); 2]; 8];
+            matrix[0][1] = BinaryElem128::one();
+            matrix[1].fill(BinaryElem128::one());
+            encode_cols(&mut matrix, &encoder, parallel);
+            assert_eq!(matrix.len(), 8);
+            for (row, q) in matrix.iter().zip(0_u64..8) {
+                assert_eq!(
+                    row.as_slice(),
+                    [BinaryElem128::from_bits(q), BinaryElem128::from_bits(q ^ 1)]
+                );
+            }
+        }
+        Ok(())
     }
 }

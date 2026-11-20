@@ -32,7 +32,7 @@ where
 pub fn product_round_coeffs<F: BinaryFieldElement>(f: &[F], g: &[F]) -> (F, F, F) {
     debug_assert_eq!(f.len(), g.len());
     let (mut s0, mut s1, mut s2) = (F::zero(), F::zero(), F::zero());
-    for (fp, gp) in f.chunks_exact(2).zip(g.chunks_exact(2)) {
+    for (fp, gp) in f.as_chunks::<2>().0.iter().zip(g.as_chunks::<2>().0) {
         s0 = s0.add(&fp[0].mul(&gp[0]));
         s1 = s1.add(&fp[1].mul(&gp[1]));
         s2 = s2.add(&fp[1].add(&fp[0]).mul(&gp[1].add(&gp[0])));
@@ -50,7 +50,9 @@ pub fn eval_round_poly<F: BinaryFieldElement>(coeffs: (F, F, F), r: F) -> F {
 
 /// Bind the lsb variable of a multilinear table to `r`.
 pub fn fold_lsb<F: BinaryFieldElement>(poly: &[F], r: F) -> Vec<F> {
-    poly.chunks_exact(2)
+    poly.as_chunks::<2>()
+        .0
+        .iter()
         .map(|p| p[0].add(&r.mul(&p[1].add(&p[0]))))
         .collect()
 }
@@ -157,7 +159,9 @@ where
     // suffix_k[hi]. Prefixes stay in cache while each output block of
     // 2^split entries is accumulated.
     // keep ≥ 4 output blocks per thread, prefixes ≤ 2^12 entries
-    let par_bits = (4 * rayon::current_num_threads()).next_power_of_two().trailing_zeros() as usize;
+    let par_bits = (4 * rayon::current_num_threads())
+        .next_power_of_two()
+        .trailing_zeros() as usize;
     let split = n.saturating_sub(par_bits).min(12);
     let tensor = |a: &[U], scale: U| {
         let mut t = vec![U::zero(); 1 << a.len()];
@@ -250,7 +254,9 @@ mod tests {
             let rs = reed_solomon::reed_solomon::<T>(m, 4 * m);
             let w = crate::ligero::ligero_commit(&v, m, n, &rs);
 
-            let rho: Vec<U> = (0..log_n).map(|i| U::from_bits(0xABCD_0000 + i as u64)).collect();
+            let rho: Vec<U> = (0..log_n)
+                .map(|i| U::from_bits(0xABCD_0000 + i as u64))
+                .collect();
             let mut y: Vec<U> = v.iter().map(|&x| U::from(x)).collect();
             crate::utils::partial_eval_multilinear(&mut y, &rho);
 
@@ -273,7 +279,11 @@ mod tests {
                     T::from_bits(q as u64),
                     U::one(),
                 );
-                assert_eq!(tensorized_dot_product(row, &rho), inner_product(&y, &g), "q={q}");
+                assert_eq!(
+                    tensorized_dot_product(row, &rho),
+                    inner_product(&y, &g),
+                    "q={q}"
+                );
             }
         }
         check::<BinaryElem32>(64, 16);
@@ -412,7 +422,11 @@ mod tests {
             (0..3).map(|i| BinaryElem128::from_bits(0x77 + i)).collect();
         let queries: Vec<usize> = (0..40).map(|i| i * 4093 % (4 << n)).collect();
         let rows: Vec<Vec<BinaryElem32>> = (0..40)
-            .map(|i| (0..8).map(|j| BinaryElem32::from((i * 8 + j) as u32 * 2654435761)).collect())
+            .map(|i| {
+                (0..8)
+                    .map(|j| BinaryElem32::from((i * 8 + j) as u32 * 2654435761))
+                    .collect()
+            })
             .collect();
         let alpha = BinaryElem128::from_bits(0xDEAD_BEEF);
         let seq = induce_sumcheck_poly(n, &sks_vks, &rows, &v_challenges, &queries, alpha);
